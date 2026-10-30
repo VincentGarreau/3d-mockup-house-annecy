@@ -102,6 +102,19 @@ aside h2{margin:0 0 8px;font-size:11px;font-weight:600;letter-spacing:.08em;text
 .hud-info .h.warn{color:#c23b32}
 .hud-info small{color:var(--muted);font-size:11.5px}
 .hud-info button{justify-self:start;margin-top:4px;font:600 12.5px var(--f-ui);background:var(--ink);color:var(--panel);border:0;border-radius:4px;padding:6px 10px;cursor:pointer}
+.tour{position:absolute;left:50%;top:58px;transform:translateX(-50%);width:min(560px,calc(100% - 24px));background:var(--panel);border:1px solid var(--line);border-radius:4px;padding:10px 12px 0;display:grid;gap:8px;box-shadow:0 6px 24px rgba(0,0,0,.12)}
+.tour-txt{display:grid;gap:2px}
+.tour-txt b{font-size:15px}
+.tour-txt p{margin:0;font-size:12.5px;color:var(--muted);line-height:1.4;min-height:2.8em}
+.tour-step{font:500 11px var(--f-num);color:var(--muted)}
+.tour-ctl{display:flex;gap:6px;flex-wrap:wrap}
+.tour-ctl button{font:600 12.5px var(--f-ui);background:transparent;color:var(--ink);border:1px solid var(--line);border-radius:4px;padding:5px 10px;cursor:pointer;min-width:34px}
+.tour-ctl button:hover{border-color:var(--muted)}
+.tour-ctl #tour-play{background:var(--accent);border-color:var(--accent);color:#1b1408;min-width:74px}
+.tour-ctl #tour-stop{margin-left:auto}
+.tour-prog{height:3px;margin:0 -12px;background:var(--line);border-radius:0 0 4px 4px;overflow:hidden}
+.tour-prog i{display:block;height:100%;width:0;background:var(--accent);transition:width .3s}
+.hud.touring .hud-info small,.hud.touring .cross{display:none}
 #minimap{position:absolute;right:12px;bottom:12px;width:200px;height:150px;background:var(--panel);border:1px solid var(--line);border-radius:4px;cursor:crosshair}
 .cross{position:absolute;left:50%;top:50%;width:6px;height:6px;margin:-3px 0 0 -3px;border-radius:50%;background:#fff;box-shadow:0 0 0 1.5px rgba(0,0,0,.45);pointer-events:none}
 .dimlab{font:500 11px var(--f-num);background:var(--ink);color:var(--panel);padding:2px 6px;border-radius:3px;white-space:nowrap}
@@ -164,6 +177,7 @@ aside h2{margin:0 0 8px;font-size:11px;font-weight:600;letter-spacing:.08em;text
         </select></label>
       <span class="sep" aria-hidden="true"></span>
       <button id="m-walk" class="mode" aria-pressed="false">Visite</button>
+      <button id="m-tour" class="mode" aria-pressed="false">Visite guidée</button>
       <button id="m-furn" class="mode" aria-pressed="false">Aménager</button>
     </div>
     <div class="compass" aria-hidden="true"><svg viewBox="-27 -27 54 54" id="compass"><g id="compass-rose"><path d="M0 -19 L5 0 L0 -3 L-5 0 Z" fill="#c23b32"/><path d="M0 19 L5 0 L0 3 L-5 0 Z" fill="currentColor" opacity=".45"/><text x="0" y="-20" text-anchor="middle" font-size="8" font-weight="700" fill="currentColor" dominant-baseline="auto">N</text><text x="0" y="25" text-anchor="middle" font-size="7" fill="currentColor" opacity=".7">S</text></g></svg></div>
@@ -176,6 +190,17 @@ aside h2{margin:0 0 8px;font-size:11px;font-weight:600;letter-spacing:.08em;text
         <button id="walk-exit">Quitter la visite</button>
       </div>
       <canvas id="minimap" aria-label="Plan de situation, cliquer pour s'y rendre"></canvas>
+      <div class="tour" id="tour" hidden>
+        <div class="tour-txt"><span class="tour-step" id="tour-step">1 / 14</span><b id="tour-title">Palier</b><p id="tour-text"></p></div>
+        <div class="tour-ctl">
+          <button id="tour-prev" title="Étape précédente" aria-label="Étape précédente">‹</button>
+          <button id="tour-play" title="Pause" aria-label="Pause">Pause</button>
+          <button id="tour-next" title="Étape suivante" aria-label="Étape suivante">›</button>
+          <button id="tour-speed" title="Vitesse">×1</button>
+          <button id="tour-stop" title="Quitter la visite guidée">Quitter</button>
+        </div>
+        <div class="tour-prog"><i id="tour-prog"></i></div>
+      </div>
     </div>
     <div class="hint" id="hint">Glisser pour tourner · clic droit ou deux doigts pour déplacer · molette pour zoomer · clic sur une pièce pour la visiter</div>
     <div class="legend"><span><i style="background:var(--low)"></i>Niveau séjour +6,46</span><span><i style="background:var(--high)"></i>Niveau haut ≈ +8,16</span><span><i style="background:#d9534f;opacity:.6"></i>Sous 1,80 m</span></div>
@@ -2020,7 +2045,88 @@ function walkTap(e){
   if (hit && walkables().includes(hit.object)) walk.target = { x: hit.point.x, z: hit.point.z };
 }
 const fmt = v => v.toFixed(2).replace('.', ',');
+/* Visite guidée : parcours automatique de tout l'appartement, porte par porte (points en px du plan).
+   Chaque étape : un trajet (points de passage) puis un arrêt où la caméra balaie la pièce en lisant la légende. */
+const TOUR_STEPS = [
+  { t:'Palier commun', x:"La porte d'entrée de l'appartement, au 2e étage. L'entrée donne directement sur le séjour.", path:[[1092,1030]], at:[1092,950], dur:4 },
+  { t:'Entrée', x:"Placard vitré à gauche, salle de bains en face, et l'ouverture sur le séjour à droite.", path:[[1092,950],[1080,895]], at:[1300,880], sweep:1.0, dur:6 },
+  { t:'Salle de bains', x:"Baignoire balnéo dans l'angle, meuble vasque et miroir rond, WC suspendu. Plafond en pente côté Velux.", path:[[1027,860],[1027,815],[1050,730]], at:[1120,620], sweep:1.1, dur:7, pitch:-0.1 },
+  { t:'Dégagement', x:"Le couloir qui dessert les deux chambres du bas.", path:[[1027,830],[1027,880],[985,908],[900,908]], at:[770,908], sweep:0.5, dur:4 },
+  { t:'Chambre 1', x:"Placard intégré, plafond rampant avec Velux. 8,50 m² au sol, dont 2,92 m² sous 1,80 m.", path:[[805,908],[805,880],[800,860]], at:[940,690], sweep:1.2, dur:7, pitch:-0.1 },
+  { t:'Chambre 2', x:"La plus grande des chambres du bas : 10,81 m², fenêtre sur le pignon côté parking, placards bas sous la pente.", path:[[805,880],[805,908],[765,908],[720,880]], at:[580,770], sweep:1.2, dur:7, pitch:-0.08 },
+  { t:'Séjour', x:"Volume cathédrale sous la charpente, jusqu'à ≈ 5 m sous le faîtage. Grande fenêtre dans le pignon, poteau rond central.", path:[[765,908],[900,908],[985,908],[1090,902],[1180,902],[1300,905]], at:[1420,600], sweep:1.4, dur:8, pitch:0.12 },
+  { t:'Cuisine', x:"Cuisine en L avec colonne four et colonne frigo, îlot en biais avec évier, hotte sous la pente.", path:[[1420,880]], at:[1250,690], sweep:1.1, dur:7, pitch:-0.18 },
+  { t:'Loggia', x:"13 m² couverts, plein sud-ouest, vue sur la prairie et les montagnes.", path:[[1540,895],[1577,885],[1660,900]], at:[1900,950], sweep:1.2, dur:7 },
+  { t:'Escalier', x:"Escalier suspendu le long du mur, vers le niveau haut (+1,70 m).", path:[[1577,885],[1520,980],[1500,1096]], at:[1291,1096], sweep:0.15, dur:3, pitch:0.22 },
+  { t:'Bureau / salon', x:"24 m² sous deux pans de toit. Coin cinéma : TV 65″ sur bras, toile 100″ enroulable, son Dolby Atmos 5.1.2 ; coin bureau près de la fenêtre.", path:[[1400,1096],[1291,1096],[1240,1100],[1264,1142],[1264,1240]], at:[1070,1160], sweep:1.3, dur:9, pitch:-0.06 },
+  { t:'Dégagement du haut', x:"Il dessert la salle d'eau, la chambre 3 et le dressing.", path:[[1120,1262],[960,1240],[930,1172],[905,1172],[800,1172]], at:[700,1172], sweep:0.5, dur:4 },
+  { t:"Salle d'eau", x:"Douche d'angle vitrée, double vasque, WC, et le lave-linge sous le Velux.", path:[[767,1172],[767,1200],[775,1290]], at:[760,1410], sweep:1.2, dur:6, pitch:-0.22 },
+  { t:'Chambre 3', x:"12,72 m², grande fenêtre à allège vitrée sur le parking, placards bas sous la pente sur toute la longueur.", path:[[767,1200],[767,1172],[690,1170],[655,1168],[590,1230]], at:[450,1150], sweep:1.1, dur:7, pitch:-0.06 },
+  { t:'Rangement / dressing', x:"Dressing de 6,88 m², avec une échelle vers la mezzanine.", path:[[655,1168],[690,1150],[690,1102],[700,1092]], at:[575,1000], sweep:1.0, dur:5, pitch:-0.28 },
+  { t:'Mezzanine', x:"Petite pièce sous le faîtage, au-dessus du dressing, éclairée par la fenêtre du pignon. Fin de la visite.", path:[[708,1095],[708,1000],[660,995]], at:[555,995], sweep:0.8, dur:7 },
+];
+for (const st of TOUR_STEPS) { const e = st.path[st.path.length - 1]; st.look = Math.atan2(-(st.at[0] - e[0]), -(st.at[1] - e[1])); }   // cap vers le point à regarder
+const TOUR = { on:false, paused:false, i:0, seg:0, phase:'move', t:0, speed:1, from:null };
+const angDiff = (a, b) => { let d = b - a; while (d > Math.PI) d -= 2 * Math.PI; while (d < -Math.PI) d += 2 * Math.PI; return d; };
+function tourUI(){
+  const st = TOUR_STEPS[TOUR.i];
+  $('tour-step').textContent = `${TOUR.i + 1} / ${TOUR_STEPS.length}`; $('tour-title').textContent = st.t; $('tour-text').textContent = st.x;
+  $('tour-play').textContent = TOUR.paused ? 'Reprendre' : 'Pause'; $('tour-speed').textContent = '×' + TOUR.speed;
+  $('tour-prog').style.width = ((TOUR.i + (TOUR.phase === 'stop' ? Math.min(1, TOUR.t / st.dur) : 0)) / TOUR_STEPS.length * 100) + '%';
+}
+function tourGo(i, jump){
+  TOUR.i = Math.max(0, Math.min(TOUR_STEPS.length - 1, i)); TOUR.seg = 0; TOUR.phase = 'move'; TOUR.t = 0;
+  if (jump) {                           // saut direct : on se place au début du trajet de l'étape (fin de l'étape précédente)
+    const prev = TOUR.i > 0 ? TOUR_STEPS[TOUR.i - 1] : null, p = prev ? prev.path[prev.path.length - 1] : TOUR_STEPS[0].path[0];
+    walk.x = X(p[0]); walk.z = Z(p[1]); const f = floorBelow(walk.x, walk.z, 12); walk.floor = f ?? walk.floor; walk.eyeY = walk.floor + 1.62;
+    if (prev) walk.yaw = prev.look;
+  }
+  tourUI();
+}
+function startTour(){
+  if (!walk.on) enterWalk();
+  TOUR.on = true; TOUR.paused = false; $('tour').hidden = false; $('hud').classList.add('touring'); $('m-tour').setAttribute('aria-pressed', 'true');
+  const p = TOUR_STEPS[0].path[0]; teleport(p[0], p[1] + 25, 0); walk.pitch = 0; tourGo(0);
+}
+function stopTour(){
+  if (!TOUR.on) return; TOUR.on = false; $('tour').hidden = true; $('hud').classList.remove('touring'); $('m-tour').setAttribute('aria-pressed', 'false');
+}
+function tourStep(dt){
+  if (TOUR.paused) return;
+  const st = TOUR_STEPS[TOUR.i], v = 0.75 * TOUR.speed;
+  if (TOUR.phase === 'move') {
+    const tgt = st.path[TOUR.seg], tx = X(tgt[0]), tz = Z(tgt[1]), ddx = tx - walk.x, ddz = tz - walk.z, d = Math.hypot(ddx, ddz);
+    if (d < 0.03) { TOUR.seg++; if (TOUR.seg >= st.path.length) { TOUR.phase = 'turn'; TOUR.t = 0; } return; }
+    const heading = Math.atan2(-ddx, -ddz), turn = angDiff(walk.yaw, heading);
+    walk.yaw += turn * Math.min(1, dt * 3.2);
+    const go = Math.abs(turn) > 1.2 ? 0.25 : 1;                      // ralentit dans les virages serrés
+    let step = Math.min(d, v * go * dt); const n = Math.max(1, Math.ceil(step / 0.04));
+    for (let k = 0; k < n; k++) { walk.x += ddx / d * step / n; walk.z += ddz / d * step / n; const f = floorBelow(walk.x, walk.z, walk.floor + 0.45); if (f !== null) walk.floor = f; }
+    walk.pitch += ((st.pitch && TOUR.seg === st.path.length - 1 ? st.pitch * 0.5 : 0) - walk.pitch) * Math.min(1, dt * 2);
+  } else if (TOUR.phase === 'turn') {
+    const turn = angDiff(walk.yaw, st.look); walk.yaw += turn * Math.min(1, dt * 2.4 * TOUR.speed);
+    walk.pitch += ((st.pitch || 0) - walk.pitch) * Math.min(1, dt * 2);
+    if (Math.abs(turn) < 0.03) { TOUR.phase = 'stop'; TOUR.t = 0; }
+  } else {
+    TOUR.t += dt * TOUR.speed; const sw = st.sweep || 0;
+    walk.yaw = st.look + sw / 2 * Math.sin(Math.min(1, TOUR.t / st.dur) * Math.PI * 2);   // balayage lent gauche-droite
+    walk.pitch += ((st.pitch || 0) - walk.pitch) * Math.min(1, dt * 2);
+    if (TOUR.t >= st.dur) { if (TOUR.i < TOUR_STEPS.length - 1) tourGo(TOUR.i + 1); else { TOUR.paused = true; } }
+    tourUI();
+  }
+}
+window.__tour = { TOUR, tourStep, startTour };
+$('m-tour').onclick = () => TOUR.on ? stopTour() : startTour();
+$('tour-stop').onclick = () => stopTour();
+$('tour-play').onclick = () => { if (TOUR.paused && TOUR.i === TOUR_STEPS.length - 1 && TOUR.phase === 'stop' && TOUR.t >= TOUR_STEPS[TOUR.i].dur) startTour(); else TOUR.paused = !TOUR.paused; tourUI(); };
+$('tour-next').onclick = () => { tourGo(TOUR.i + 1, true); };
+$('tour-prev').onclick = () => { tourGo(TOUR.i - 1, true); };
+$('tour-speed').onclick = () => { TOUR.speed = TOUR.speed === 1 ? 2 : TOUR.speed === 2 ? 0.5 : 1; tourUI(); };
 function updateWalk(dt){
+  if (TOUR.on) {                                                    // la visite guidée pilote la caméra ; toucher les commandes la rend à l'utilisateur
+    const k = walk.keys; if (k.KeyW || k.KeyS || k.KeyA || k.KeyD || k.ArrowUp || k.ArrowDown || k.ArrowLeft || k.ArrowRight || walk.target) stopTour();
+    else tourStep(dt);
+  }
   const k = walk.keys, run = (k.ShiftLeft || k.ShiftRight) ? 2.2 : 1.3;
   if (k.ArrowLeft) walk.yaw += 1.8 * dt; if (k.ArrowRight) walk.yaw -= 1.8 * dt;
   const f = (k.KeyW || k.ArrowUp ? 1 : 0) - (k.KeyS || k.ArrowDown ? 1 : 0), s = (k.KeyD ? 1 : 0) - (k.KeyA ? 1 : 0);
@@ -2089,7 +2195,7 @@ function enterWalk(){
   document.querySelectorAll('.views button:not(.mode)').forEach(b => b.setAttribute('aria-pressed', 'false'));
 }
 function exitWalk(){
-  if (!walk.on) return; walk.on = false;
+  if (!walk.on) return; stopTour(); walk.on = false;
   G.ceil.visible = walk.saved.ceil; $('labels').style.display = walk.saved.labels;
   ceilMats.forEach(m => { m.opacity = 0.26; m.transparent = true; m.depthWrite = false; m.emissive.setHex(0); m.needsUpdate = true; });
   walkAmb.intensity = 0;
