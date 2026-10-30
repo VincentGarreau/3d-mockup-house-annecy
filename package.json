@@ -1,0 +1,9 @@
+{
+  "name": "3d-mockup-house-annecy",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Maquette 3D interactive du duplex, 2 allée de la Bergeronnette, Annecy-le-Vieux",
+  "main": "server.js",
+  "scripts": { "start": "node server.js" },
+  "engines": { "node": ">=18" }
+}
